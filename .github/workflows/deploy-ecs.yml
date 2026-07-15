@@ -1,0 +1,87 @@
+name: Deploy to ECS Express Mode
+
+on:
+  workflow_run:
+    workflows: ["Unit Tests"]
+    branches: [main]
+    types: [completed]
+
+jobs:
+  deploy:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Log in to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image to ECR
+        id: build
+        env:
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+          IMAGE_TAG: ${{ github.sha }}
+          GH_ORG_READ_TOKEN: ${{ secrets.GH_ORG_READ_TOKEN }}
+        run: |
+          DOCKER_BUILDKIT=1 docker build \
+            --secret id=github_token,env=GH_ORG_READ_TOKEN \
+            -t $REGISTRY/$REPOSITORY:$IMAGE_TAG .
+          docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG
+          docker tag $REGISTRY/$REPOSITORY:$IMAGE_TAG $REGISTRY/$REPOSITORY:latest
+          docker push $REGISTRY/$REPOSITORY:latest
+          echo "image=$REGISTRY/$REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Deploy to ECS Express Mode
+        env:
+          IMAGE_URI: ${{ steps.build.outputs.image }}
+          AMQP_URL: ${{ secrets.AMQP_URL }}
+        run: |
+          python3 - << 'PYEOF'
+          import boto3, os
+
+          ecs = boto3.client('ecs', region_name='us-east-1')
+          service_arn = 'arn:aws:ecs:us-east-1:975049982081:service/default/router'
+          image = os.environ['IMAGE_URI']
+
+          resp = ecs.describe_express_gateway_service(serviceArn=service_arn)
+          current = resp['service']['activeConfigurations'][0]['primaryContainer']
+          current['image'] = image
+
+          env_overrides = {
+              'AMQP_URL': os.environ.get('AMQP_URL', ''),
+          }
+          existing = {e['name']: e['value'] for e in current.get('environment', [])}
+          existing.update(env_overrides)
+          current['environment'] = [{'name': k, 'value': v} for k, v in existing.items()]
+
+          ecs.update_express_gateway_service(
+              serviceArn=service_arn,
+              primaryContainer=current,
+          )
+          print(f'Deployed {image}')
+          PYEOF
+
+      - name: Wait for deployment to complete
+        run: |
+          echo "Waiting for service to become healthy..."
+          for i in $(seq 1 24); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 \
+              https://ro-49aec48b80714397a11372928d826eec.ecs.us-east-1.on.aws/health)
+            echo "Attempt $i: HTTP $STATUS"
+            [ "$STATUS" = "200" ] && echo "Deployment complete." && exit 0
+            sleep 10
+          done
+          echo "Timed out waiting for healthy response." && exit 1
