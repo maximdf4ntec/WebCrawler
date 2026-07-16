@@ -29,7 +29,7 @@ This plan implements a production-grade web crawler in Python 3.12+ using asynci
     - Implement configurable progress interval logging
     - _Requirements: 18.1, 18.2, 18.3, 18.4, 18.5_
 
-- [ ] 2. URL Normalizer and URL Filter
+- [x] 2. URL Normalizer and URL Filter
   - [x] 2.1 Implement URL Normalizer
     - Create `src/crawler/url_normalizer.py`
     - Implement normalization steps using `urllib.parse`: lowercase scheme/host, remove default ports, remove fragments, sort query params, uppercase percent-encoded triplets, decode unreserved characters, handle trailing slashes
@@ -42,7 +42,7 @@ This plan implements a production-grade web crawler in Python 3.12+ using asynci
     - Create `tests/properties/test_url_normalizer_props.py`
     - **Validates: Requirements 3.1, 3.2, 3.3, 3.5**
 
-  - [ ] 2.3 Implement URL Filter
+  - [x] 2.3 Implement URL Filter
     - Create `src/crawler/url_filter.py`
     - Implement filter chain: strip fragment, check scheme (http/https only), check domain match, check depth, check exclude patterns (re.search), check include patterns, check dedup via MetadataStore
     - Exclude patterns take precedence over include patterns
@@ -54,8 +54,8 @@ This plan implements a production-grade web crawler in Python 3.12+ using asynci
     - Create `tests/properties/test_url_filter_props.py`
     - **Validates: Requirements 7.1, 7.2, 7.3, 7.4**
 
-- [ ] 3. Metadata Store (SQLite)
-  - [ ] 3.1 Implement Metadata Store initialization and schema
+- [-] 3. Metadata Store (SQLite)
+  - [-] 3.1 Implement Metadata Store initialization and schema
     - Create `src/crawler/metadata_store.py`
     - Implement `init()`: create tables (`crawl_config`, `url_records`, `html_metadata`, `image_metadata`, `video_metadata`, `pdf_metadata`) with indexes
     - Configure SQLite pragmas: WAL mode, busy_timeout=5000, synchronous=NORMAL, foreign_keys=ON
