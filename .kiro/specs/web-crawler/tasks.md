@@ -141,8 +141,8 @@ This plan implements a production-grade web crawler in Python 3.12+ using asynci
     - Create `tests/properties/test_retry_props.py`
     - **Validates: Requirements 8.2, 8.4**
 
-- [ ] 7. Content Dispatcher and type-specific processors
-  - [ ] 7.1 Implement Content Dispatcher
+- [x] 7. Content Dispatcher and type-specific processors
+  - [x] 7.1 Implement Content Dispatcher
     - Create `src/crawler/content_dispatcher.py`
     - Implement `BaseProcessor` ABC with abstract `process()` method and shared `compute_hash()` / `write_file_if_not_exists()` helpers
     - Implement `ContentDispatcher` class with `register()` and `dispatch()` methods
