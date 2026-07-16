@@ -9,12 +9,13 @@ Tests:
 """
 
 import os
+import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from crawler.__main__ import main
+from crawler.__main__ import main, _build_parser
 
 
 # ---------------------------------------------------------------------------
@@ -29,10 +30,22 @@ class TestCliEntryPoint:
         """main() is importable from crawler.__main__."""
         assert callable(main)
 
-    def test_main_raises_not_implemented_stub(self) -> None:
-        """Stub main() raises NotImplementedError."""
-        with pytest.raises(NotImplementedError):
-            main()
+    def test_main_exits_with_help_when_no_subcommand(self) -> None:
+        """main() exits with code 1 when no subcommand is given."""
+        with patch.object(sys, "argv", ["crawler"]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+            assert exc_info.value.code == 1
+
+    def test_parser_has_crawl_and_resume_subcommands(self) -> None:
+        """Parser accepts 'crawl' and 'resume' subcommands."""
+        parser = _build_parser()
+        args = parser.parse_args(["crawl", "--config", "test.yaml"])
+        assert args.command == "crawl"
+        assert args.config == "test.yaml"
+
+        args = parser.parse_args(["resume"])
+        assert args.command == "resume"
 
 
 # ---------------------------------------------------------------------------

@@ -17,13 +17,18 @@ import time
 from typing import TYPE_CHECKING, Optional
 from urllib.parse import urlparse
 
+import httpx
+
 from crawler.logger import get_logger
 from crawler.types import CrawlerConfig, LeaseResult, WorkerResult
 from crawler.url_normalizer import URLNormalizer
 from crawler.worker_pool import WorkerPool
 
 if TYPE_CHECKING:
+    from crawler.content_dispatcher import ContentDispatcher
     from crawler.metadata_store import MetadataStore
+    from crawler.rate_limiter import RateLimiter
+    from crawler.url_filter import URLFilter
 
 logger = get_logger()
 
@@ -45,6 +50,12 @@ class Scheduler:
         self._shutdown_requested = False
         self._poll_interval_s = 0.5
         self._url_normalizer = URLNormalizer()
+
+        # Collaborators injected by the Crawler bootstrap before init/run
+        self.rate_limiter: Optional[RateLimiter] = None
+        self.content_dispatcher: Optional[ContentDispatcher] = None
+        self.url_filter: Optional[URLFilter] = None
+        self.http_client: Optional[httpx.AsyncClient] = None
 
     async def init(self, config: CrawlerConfig, store: "MetadataStore") -> None:
         """Initialize the scheduler: validate config, seed the frontier.
@@ -221,9 +232,9 @@ class Scheduler:
     def _create_worker(self) -> "Worker":
         """Create a Worker instance with all collaborators attached.
 
-        Returns a bare Worker; the actual collaborator wiring (rate_limiter,
-        content_dispatcher, etc.) is done by the top-level application bootstrap.
-        This method is designed to be overridden in tests or by the main entrypoint.
+        Wires config, metadata_store, url_normalizer, and any additional
+        collaborators (rate_limiter, content_dispatcher, url_filter, http_client)
+        that were injected into the scheduler by the application bootstrap.
         """
         from crawler.worker import Worker
 
@@ -231,6 +242,17 @@ class Scheduler:
         worker.config = self._config
         worker.metadata_store = self._metadata_store
         worker.url_normalizer = self._url_normalizer
+
+        # Wire optional collaborators injected by the Crawler bootstrap
+        if self.rate_limiter is not None:
+            worker.rate_limiter = self.rate_limiter
+        if self.content_dispatcher is not None:
+            worker.content_dispatcher = self.content_dispatcher
+        if self.url_filter is not None:
+            worker.url_filter = self.url_filter
+        if self.http_client is not None:
+            worker.http_client = self.http_client
+
         return worker
 
     # ------------------------------------------------------------------

@@ -4,7 +4,7 @@ Validates configuration, bootstraps infrastructure (output directories,
 MetadataStore), freezes config to the database, and delegates to the
 Scheduler for the actual crawl loop.
 
-Requirements: 1.1, 1.2, 1.4, 1.5, 1.6, 15.1, 15.2, 19.1, 19.4
+Requirements: 1.1, 1.2, 1.4, 1.5, 1.6, 6.1, 15.1, 15.2, 19.1, 19.4
 """
 
 from __future__ import annotations
@@ -15,10 +15,20 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
+import httpx
+
+from crawler.content_dispatcher import ContentDispatcher
 from crawler.logger import get_logger
 from crawler.metadata_store import MetadataStore
+from crawler.processors.html_processor import HtmlProcessor
+from crawler.processors.image_processor import ImageProcessor
+from crawler.processors.pdf_processor import PdfProcessor
+from crawler.processors.video_processor import VideoProcessor
+from crawler.rate_limiter import RateLimiter
 from crawler.scheduler import Scheduler
 from crawler.types import CrawlerConfig, CrawlResult
+from crawler.url_filter import URLFilter
+from crawler.url_normalizer import URLNormalizer
 
 logger = get_logger()
 
@@ -172,6 +182,7 @@ class Crawler:
         self._output_path = Path(output_path)
         self._store: Optional[MetadataStore] = None
         self._scheduler: Optional[Scheduler] = None
+        self._http_client: Optional[httpx.AsyncClient] = None
         self._start_time_ms: int = 0
 
     async def start(self, config_path: Path) -> CrawlResult:
@@ -239,11 +250,42 @@ class Crawler:
         await self._store.store_config(config, seed_domain)
         logger.info("config_frozen_to_db", seed_domain=seed_domain)
 
-        # 8 & 9. Create Scheduler, init, and run
+        # 8 & 9. Create Scheduler, wire collaborators, init, and run
         self._start_time_ms = int(time.time() * 1000)
         self._scheduler = Scheduler()
+
+        # Wire collaborators to the scheduler so it can inject them into workers
+        rate_limiter = RateLimiter(max_concurrency=config.max_concurrency)
+
+        content_dispatcher = ContentDispatcher()
+        content_dispatcher.register("text/html", HtmlProcessor())
+        content_dispatcher.register("image/", ImageProcessor())
+        content_dispatcher.register("video/", VideoProcessor())
+        content_dispatcher.register("application/pdf", PdfProcessor())
+
+        url_normalizer = URLNormalizer()
+        url_filter = URLFilter(
+            seed_domain=seed_domain,
+            max_depth=config.max_depth,
+            include_patterns=config.include_patterns,
+            exclude_patterns=config.exclude_patterns,
+            store=self._store,
+        )
+
+        # Shared httpx client for connection pooling across workers
+        self._http_client = httpx.AsyncClient(timeout=30.0)
+
+        self._scheduler.rate_limiter = rate_limiter
+        self._scheduler.content_dispatcher = content_dispatcher
+        self._scheduler.url_filter = url_filter
+        self._scheduler.http_client = self._http_client
+
         await self._scheduler.init(config, self._store)
         await self._scheduler.run()
+
+        # Cleanup shared http client
+        await self._http_client.aclose()
+        self._http_client = None
 
         # Compute result from state counts
         return await self._build_result()
@@ -291,20 +333,56 @@ class Crawler:
         # Create output directories (they may already exist)
         _create_output_directories(self._output_path)
 
-        # Create Scheduler, init, and run
+        # Extract seed_domain for URLFilter
+        parsed_seed = urlparse(config.seed_url)
+        resume_seed_domain = seed_domain or parsed_seed.netloc
+
+        # Wire all collaborators
         self._start_time_ms = int(time.time() * 1000)
         self._scheduler = Scheduler()
+
+        rate_limiter = RateLimiter(max_concurrency=config.max_concurrency)
+
+        content_dispatcher = ContentDispatcher()
+        content_dispatcher.register("text/html", HtmlProcessor())
+        content_dispatcher.register("image/", ImageProcessor())
+        content_dispatcher.register("video/", VideoProcessor())
+        content_dispatcher.register("application/pdf", PdfProcessor())
+
+        url_filter = URLFilter(
+            seed_domain=resume_seed_domain,
+            max_depth=config.max_depth,
+            include_patterns=config.include_patterns,
+            exclude_patterns=config.exclude_patterns,
+            store=self._store,
+        )
+
+        self._http_client = httpx.AsyncClient(timeout=30.0)
+
+        self._scheduler.rate_limiter = rate_limiter
+        self._scheduler.content_dispatcher = content_dispatcher
+        self._scheduler.url_filter = url_filter
+        self._scheduler.http_client = self._http_client
+
         await self._scheduler.init(config, self._store)
         await self._scheduler.run()
+
+        # Cleanup shared http client
+        await self._http_client.aclose()
+        self._http_client = None
 
         return await self._build_result()
 
     async def stop(self) -> None:
-        """Graceful shutdown: stop scheduler and close MetadataStore."""
+        """Graceful shutdown: stop scheduler, close http client, close MetadataStore."""
         logger.info("crawler_stop_requested")
 
         if self._scheduler is not None:
             await self._scheduler.shutdown()
+
+        if self._http_client is not None:
+            await self._http_client.aclose()
+            self._http_client = None
 
         if self._store is not None:
             await self._store.close()

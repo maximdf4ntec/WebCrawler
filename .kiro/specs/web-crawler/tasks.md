@@ -214,7 +214,7 @@ This plan implements a production-grade web crawler in Python 3.12+ using asynci
     - Implement graceful shutdown: stop dispatching, drain worker pool
     - _Requirements: 1.3, 2.3, 4.1, 4.4, 8.1, 8.2, 8.4, 8.5, 8.6, 17.1, 17.2, 17.3, 17.4_
 
-  - [ ] 9.2 Implement Crawler entry point
+  - [x] 9.2 Implement Crawler entry point
     - Create `src/crawler/crawler.py`
     - Implement `start()`: load config from YAML via `CrawlerConfig.from_yaml()`, validate (reject out-of-range params), extract seed domain, create output directories, initialize Metadata Store, freeze config to DB, create Scheduler, run via asyncio
     - Implement `resume()`: load frozen config from DB (ignore YAML), detect config mismatch if YAML also provided, resume from existing state
@@ -229,7 +229,7 @@ This plan implements a production-grade web crawler in Python 3.12+ using asynci
     - **Validates: Requirements 19.1**
 
 - [ ] 10. Integration wiring and end-to-end flow
-  - [ ] 10.1 Wire all components together
+  - [x] 10.1 Wire all components together
     - Create `src/crawler/__main__.py` as the CLI entry point (using argparse or click)
     - Instantiate and connect: Crawler → Scheduler → Worker Pool → Workers → Rate Limiter → Content Dispatcher → URL Filter → URL Normalizer → Metadata Store → Logger
     - Implement progress reporting at configurable intervals
