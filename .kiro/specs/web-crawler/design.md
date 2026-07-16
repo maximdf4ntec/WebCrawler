@@ -404,109 +404,147 @@ class RateLimiter:
 
 ### 6. URL Normalizer
 
-Implements deterministic URL canonicalization per Requirement 3.
+Implements deterministic URL canonicalization per Requirement 3 using a composable pipeline of step classes. Each normalization transformation is an independent `NormalizationStep` class, configured via YAML.
+
+**Architecture**: Chain-of-responsibility pattern. The `URLNormalizer` facade delegates to a `NormalizationPipeline` that executes an ordered list of `NormalizationStep` instances. Steps communicate through a mutable `NormalizationContext` dataclass.
 
 ```python
+# Public API (unchanged)
 class URLNormalizer:
+    def __init__(self, config_path: Optional[Path] = None) -> None: ...
     def normalize(self, raw_url: str) -> Optional[str]:
         """Returns canonical URL string, or None if unparseable."""
+        return self._pipeline.execute(raw_url)
+```
+
+**Pipeline Infrastructure** (`src/crawler/pipeline/`):
+
+```python
+@dataclass
+class NormalizationContext:
+    raw_url: str
+    parsed: Optional[ParseResult] = None
+    scheme: str = ""
+    host: str = ""
+    port: Optional[int] = None
+    path: str = ""
+    query: str = ""
+    rejected: bool = False
+
+
+class NormalizationStep(ABC):
+    @abstractmethod
+    def execute(self, ctx: NormalizationContext) -> NormalizationContext: ...
+    @property
+    @abstractmethod
+    def name(self) -> str: ...
+
+
+class NormalizationPipeline:
+    def __init__(self, steps: list[NormalizationStep]) -> None: ...
+    def execute(self, raw_url: str) -> Optional[str]:
+        """Run steps in order. Return None if any step rejects. Reconstruct URL on success."""
         ...
 ```
 
-**Algorithm — Normalization Steps (in order):**
+**Concrete Normalization Steps** (executed in registry order):
 
-```python
-def normalize(self, raw: str) -> Optional[str]:
-    from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode, unquote
+| Step Class | `name` | Responsibility |
+|---|---|---|
+| `ParseURLStep` | `parse_url` | Parse URL, reject if empty/no scheme/no hostname |
+| `LowercaseStep` | `lowercase` | Lowercase scheme and host |
+| `RemoveDefaultPortStep` | `remove_default_port` | Remove port 80 for http, 443 for https |
+| `RemoveFragmentStep` | `remove_fragment` | No-op (fragment not carried in context) |
+| `SortQueryParamsStep` | `sort_query_params` | Sort query params by name, then value |
+| `UppercasePercentEncodingStep` | `uppercase_percent_encoding` | Uppercase hex in percent-encoded triplets |
+| `DecodeUnreservedStep` | `decode_unreserved` | Decode unreserved chars per RFC 3986 §2.3 |
+| `TrailingSlashStep` | `trailing_slash` | Remove trailing slash for non-root, ensure "/" for bare domains |
 
-    # 1. Parse URL — reject if invalid
-    parsed = urlparse(raw)
-    if not parsed.scheme or not parsed.hostname:
-        return None
+**YAML Configuration** (`pipeline_config.yaml`):
 
-    # 2. Lowercase scheme and host
-    scheme = parsed.scheme.lower()
-    host = parsed.hostname.lower()
-    port = parsed.port
-
-    # 3. Remove default ports (80 for http, 443 for https)
-    if (scheme == "http" and port == 80) or (scheme == "https" and port == 443):
-        port = None
-
-    # 4. Remove fragment
-    fragment = ""
-
-    # 5. Sort query parameters by name (ascending), then by value
-    params = parse_qsl(parsed.query, keep_blank_values=True)
-    sorted_params = sorted(params, key=lambda p: (p[0], p[1]))
-    query = urlencode(sorted_params)
-
-    # 6. Uppercase percent-encoded triplets
-    path = self._uppercase_percent_encoding(parsed.path)
-
-    # 7. Decode unreserved percent-encoded characters
-    path = self._decode_unreserved(path)
-
-    # 8. Trailing slash: remove for non-root paths, keep for root "/"
-    if path != "/" and path.endswith("/"):
-        path = path.rstrip("/")
-    if not path:
-        path = "/"
-
-    # 9. Reconstruct and return canonical string
-    netloc = host + (f":{port}" if port else "")
-    return urlunparse((scheme, netloc, path, "", query, fragment))
+```yaml
+normalizer:
+  steps:
+    parse_url:
+      enabled: true
+    lowercase:
+      enabled: true
+    # ... each step can be enabled/disabled independently
 ```
+
+**Adding a new step**: Create a class extending `NormalizationStep`, add it to `NORMALIZATION_STEPS` registry, enable in YAML.
 
 **Invariant**: `normalize(normalize(u)) == normalize(u)` for all valid URLs `u`.
 
 ### 7. URL Filter
 
-Validates discovered URLs against crawl policy.
+Validates discovered URLs against crawl policy using a composable pipeline of step classes. Each filter check is an independent `FilterStep` class, configured via YAML. The pipeline short-circuits on the first rejection.
+
+**Architecture**: Same chain-of-responsibility pattern as the normalizer. The `URLFilter` facade delegates to a `FilterPipeline` that executes an ordered list of `FilterStep` instances. Steps read from an immutable `FilterContext` and return a boolean pass/reject decision.
 
 ```python
+# Public API (unchanged)
 class URLFilter:
-    def passes(self, normalized_url: str, depth: int) -> bool: ...
+    def __init__(self, seed_domain, max_depth, include_patterns, exclude_patterns, store,
+                 config_path: Optional[Path] = None) -> None: ...
+    def passes(self, url: str, depth: int) -> bool:
+        """Returns True if URL passes all filter checks (short-circuits on first rejection)."""
+        ...
 ```
 
-**Algorithm — Filter Chain (short-circuit on first rejection):**
+**Pipeline Infrastructure**:
 
 ```python
-def passes(self, url: str, depth: int) -> bool:
-    from urllib.parse import urlparse
+@dataclass
+class FilterContext:
+    url: str
+    parsed: ParseResult
+    depth: int
+    seed_domain: str
+    max_depth: Optional[int]
+    include_patterns: list[str]
+    exclude_patterns: list[str]
+    store: object  # MetadataStore
 
-    parsed = urlparse(url)
 
-    # 1. Strip fragment (already normalized, but defensive)
-    # 2. Reject if scheme is not http or https
-    if parsed.scheme not in ("http", "https"):
-        return False
+class FilterStep(ABC):
+    @abstractmethod
+    def execute(self, ctx: FilterContext) -> bool: ...
+    @property
+    @abstractmethod
+    def name(self) -> str: ...
 
-    # 3. Reject if domain does not match seed_domain
-    if parsed.hostname != self._seed_domain:
-        return False
 
-    # 4. Reject if depth > max_depth (when configured)
-    if self._max_depth is not None and depth > self._max_depth:
-        return False
-
-    # 5. Reject if url matches any exclude_pattern
-    for pattern in self._exclude_patterns:
-        if re.search(pattern, url):
-            return False
-
-    # 6. If include_patterns configured: reject if url matches none
-    if self._include_patterns:
-        if not any(re.search(p, url) for p in self._include_patterns):
-            return False
-
-    # 7. Reject if already exists in MetadataStore (dedup check)
-    if self._store.exists(url):
-        return False
-
-    # 8. Accept
-    return True
+class FilterPipeline:
+    def execute(self, ctx: FilterContext) -> bool:
+        """Run steps in order. Return False on first rejection (short-circuit)."""
+        ...
 ```
+
+**Concrete Filter Steps** (executed in registry order):
+
+| Step Class | `name` | Responsibility |
+|---|---|---|
+| `SchemeCheckStep` | `scheme_check` | Reject if scheme not http/https |
+| `DomainMatchStep` | `domain_match` | Reject if hostname != seed_domain |
+| `DepthCheckStep` | `depth_check` | Reject if depth > max_depth (when configured) |
+| `ExcludePatternStep` | `exclude_pattern` | Reject if URL matches any exclude pattern |
+| `IncludePatternStep` | `include_pattern` | Reject if no include pattern matches (when configured) |
+| `DeduplicationStep` | `deduplication` | Reject if URL exists in MetadataStore |
+
+**YAML Configuration**:
+
+```yaml
+filter:
+  steps:
+    scheme_check:
+      enabled: true
+    domain_match:
+      enabled: true
+    # ... each step can be enabled/disabled independently
+```
+
+**Adding a new filter step**: Create a class extending `FilterStep`, add it to `FILTER_STEPS` registry, enable in YAML.
 
 ### 8. Content Dispatcher
 

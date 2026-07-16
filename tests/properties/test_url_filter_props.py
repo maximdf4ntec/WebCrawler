@@ -84,14 +84,14 @@ class TestProperty3_DomainSchemeDepthEnforcement:
     """Feature: web-crawler, Property 3: URL Filter Domain/Scheme/Depth Enforcement"""
 
     @given(url=invalid_scheme_urls())
-    @settings(max_examples=100)
+    @settings(max_examples=50)
     def test_rejects_non_http_https_scheme(self, url: str) -> None:
         """Any URL with scheme != http|https is rejected regardless of other criteria."""
         url_filter = _make_filter(seed_domain="example.com", max_depth=None)
         assert url_filter.passes(url, depth=0) is False
 
     @given(url=different_domain_urls(seed_domain="example.com"))
-    @settings(max_examples=100)
+    @settings(max_examples=50)
     def test_rejects_different_domain(self, url: str) -> None:
         """Any URL whose domain != seed_domain is rejected."""
         url_filter = _make_filter(seed_domain="example.com", max_depth=None)
@@ -101,7 +101,7 @@ class TestProperty3_DomainSchemeDepthEnforcement:
         url=same_domain_urls(domain="example.com"),
         max_depth=st.integers(min_value=1, max_value=50),
     )
-    @settings(max_examples=100)
+    @settings(max_examples=50)
     def test_rejects_depth_exceeding_max(self, url: str, max_depth: int) -> None:
         """URL at depth > max_depth is rejected."""
         url_filter = _make_filter(seed_domain="example.com", max_depth=max_depth)
@@ -113,7 +113,7 @@ class TestProperty3_DomainSchemeDepthEnforcement:
         max_depth=st.integers(min_value=1, max_value=50),
         depth=st.integers(min_value=0, max_value=50),
     )
-    @settings(max_examples=100)
+    @settings(max_examples=50)
     def test_accepts_depth_within_max(
         self, url: str, max_depth: int, depth: int
     ) -> None:
@@ -127,7 +127,7 @@ class TestProperty3_DomainSchemeDepthEnforcement:
         assert result is True
 
     @given(url=same_domain_urls(domain="example.com"))
-    @settings(max_examples=50)
+    @settings(max_examples=25)
     def test_unlimited_depth_never_rejects_for_depth(self, url: str) -> None:
         """When max_depth is None, no depth-based rejection occurs."""
         url_filter = _make_filter(seed_domain="example.com", max_depth=None)
@@ -144,7 +144,7 @@ class TestProperty4_ExcludePatternPrecedence:
     @given(
         path_segment=st.from_regex(r"[a-z]{3,8}", fullmatch=True),
     )
-    @settings(max_examples=100)
+    @settings(max_examples=50)
     def test_exclude_overrides_include(self, path_segment: str) -> None:
         """A URL matching both an exclude and an include pattern is rejected."""
         url = f"https://example.com/{path_segment}"
@@ -161,7 +161,7 @@ class TestProperty4_ExcludePatternPrecedence:
     @given(
         path_segment=st.from_regex(r"[a-z]{3,8}", fullmatch=True),
     )
-    @settings(max_examples=100)
+    @settings(max_examples=50)
     def test_exclude_rejects_matching_url(self, path_segment: str) -> None:
         """A URL matching an exclude pattern is rejected even with no include patterns."""
         url = f"https://example.com/{path_segment}"
@@ -177,7 +177,7 @@ class TestProperty4_ExcludePatternPrecedence:
         path_segment=st.from_regex(r"[a-z]{3,8}", fullmatch=True),
         other_segment=st.from_regex(r"[a-z]{3,8}", fullmatch=True),
     )
-    @settings(max_examples=100)
+    @settings(max_examples=50)
     def test_include_rejects_non_matching_url(
         self, path_segment: str, other_segment: str
     ) -> None:

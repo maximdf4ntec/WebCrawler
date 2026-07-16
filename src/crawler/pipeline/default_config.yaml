@@ -1,0 +1,41 @@
+# Default pipeline configuration — all steps enabled.
+# This file documents the available pipeline steps and their default state.
+# To customize behavior, copy this file and modify as needed.
+#
+# Usage:
+#   normalizer = URLNormalizer(config_path=Path("my_config.yaml"))
+#   url_filter = URLFilter(..., config_path=Path("my_config.yaml"))
+
+normalizer:
+  steps:
+    parse_url:
+      enabled: true
+    lowercase:
+      enabled: true
+    remove_default_port:
+      enabled: true
+    remove_fragment:
+      enabled: true
+    sort_query_params:
+      enabled: true
+    uppercase_percent_encoding:
+      enabled: true
+    decode_unreserved:
+      enabled: true
+    trailing_slash:
+      enabled: true
+
+filter:
+  steps:
+    scheme_check:
+      enabled: true
+    domain_match:
+      enabled: true
+    depth_check:
+      enabled: true
+    exclude_pattern:
+      enabled: true
+    include_pattern:
+      enabled: true
+    deduplication:
+      enabled: true
