@@ -61,7 +61,7 @@ class TestFileSize:
     @pytest.mark.asyncio
     async def test_file_size_from_content_length_header(self) -> None:
         """Uses Content-Length header value when present."""
-        body = b"x" * 100
+        body = b"x" * 500
         proc = VideoProcessor()
         result = await proc.process(
             _make_response(body, content_length="500"), _make_lease(), None
