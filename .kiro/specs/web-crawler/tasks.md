@@ -112,7 +112,7 @@ This plan implements a production-grade web crawler in Python 3.12+ using asynci
     - Create `tests/properties/test_rate_limiter_props.py`
     - **Validates: Requirements 6.2, 6.5, 6.6**
 
-- [ ] 6. Worker and Worker Pool
+- [x] 6. Worker and Worker Pool
   - [x] 6.1 Implement Worker Pool with bounded concurrency
     - Create `src/crawler/worker_pool.py`
     - Implement using asyncio.Semaphore for concurrency control
@@ -120,7 +120,7 @@ This plan implements a production-grade web crawler in Python 3.12+ using asynci
     - Use configurable max concurrency (1–100)
     - _Requirements: 4.5_
 
-  - [ ] 6.2 Implement Worker fetch and response handling
+  - [x] 6.2 Implement Worker fetch and response handling
     - Create `src/crawler/worker.py`
     - Implement `process_url()`: fetch via Rate Limiter using httpx, handle status codes (200, 301/302, 404, 403, 429, 500, others) using match/case
     - Implement 200 handling: check null body, check content size, compute hash, dispatch to Content Dispatcher, enqueue discovered URLs
