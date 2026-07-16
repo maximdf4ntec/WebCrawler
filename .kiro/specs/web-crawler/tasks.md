@@ -6,8 +6,8 @@ This plan implements a production-grade web crawler in Python 3.12+ using asynci
 
 ## Tasks
 
-- [ ] 1. Project setup and core interfaces
-  - [ ] 1.1 Initialize Python project with dependencies
+- [x] 1. Project setup and core interfaces
+  - [x] 1.1 Initialize Python project with dependencies
     - Create `pyproject.toml` with dependencies: `aiosqlite`, `beautifulsoup4`, `lxml`, `pypdf`, `Pillow`, `httpx`, `pydantic`, `pyyaml`
     - Configure pytest and hypothesis in `pyproject.toml`
     - Add dev dependencies: `pytest`, `pytest-asyncio`, `hypothesis`, `freezegun` or `time-machine`
@@ -15,14 +15,14 @@ This plan implements a production-grade web crawler in Python 3.12+ using asynci
     - Create `src/crawler/__init__.py` and package structure
     - _Requirements: 19.1_
 
-  - [ ] 1.2 Define core types and Pydantic models
+  - [x] 1.2 Define core types and Pydantic models
     - Create `src/crawler/types.py` with all shared Pydantic BaseModel classes: `CrawlerConfig`, `CrawlResult`, `LeaseResult`, `WorkerResult`, `FetchResponse`, `ProcessorResult`
     - Define type-specific metadata models: `HtmlMetadata`, `ImageMetadata`, `VideoMetadata`, `PdfMetadata`
     - Define `CrawlState` enum with values: `Pending`, `In_Progress`, `Completed`, `Retry`, `Failed`, `Terminal_Failed`
     - Define exception classes: `TransientError`, `PermanentError`, `QueueOverflowError`, `RateLimitExhaustedError`
     - _Requirements: 16.1, 9.1, 5.1_
 
-  - [ ] 1.3 Implement Logger module
+  - [x] 1.3 Implement Logger module
     - Create `src/crawler/logger.py` with structured logging using Python `logging` module
     - Emit JSON-structured log entries with timestamp, level, message, and context fields
     - Implement `state_transition()`, `progress()`, and error-specific logging methods
