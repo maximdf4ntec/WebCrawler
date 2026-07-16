@@ -790,6 +790,24 @@ class MetadataStore:
             return 0
         return row["redirect_count"]
 
+    async def get_retry_count(self, normalized_url: str) -> int:
+        """Get the current retry count for a URL.
+
+        Args:
+            normalized_url: The URL to look up.
+
+        Returns:
+            The retry_count value, or 0 if the URL doesn't exist.
+        """
+        cursor = await self.db.execute(
+            "SELECT retry_count FROM url_records WHERE normalized_url = ?",
+            (normalized_url,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return 0
+        return row["retry_count"]
+
     # ------------------------------------------------------------------
     # Type-specific metadata storage
     # ------------------------------------------------------------------

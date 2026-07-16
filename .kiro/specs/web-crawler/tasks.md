@@ -205,7 +205,7 @@ This plan implements a production-grade web crawler in Python 3.12+ using asynci
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 9. Scheduler and Crawler orchestration
-  - [ ] 9.1 Implement Scheduler
+  - [x] 9.1 Implement Scheduler
     - Create `src/crawler/scheduler.py`
     - Implement `init()`: validate config, bootstrap store, seed URL enqueue
     - Implement main loop with asyncio: acquire lease batch → dispatch to worker pool → handle completions → repeat until frontier exhausted
