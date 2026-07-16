@@ -30,7 +30,7 @@ This plan implements a production-grade web crawler in Python 3.12+ using asynci
     - _Requirements: 18.1, 18.2, 18.3, 18.4, 18.5_
 
 - [ ] 2. URL Normalizer and URL Filter
-  - [ ] 2.1 Implement URL Normalizer
+  - [x] 2.1 Implement URL Normalizer
     - Create `src/crawler/url_normalizer.py`
     - Implement normalization steps using `urllib.parse`: lowercase scheme/host, remove default ports, remove fragments, sort query params, uppercase percent-encoded triplets, decode unreserved characters, handle trailing slashes
     - Return `None` for unparseable URLs
