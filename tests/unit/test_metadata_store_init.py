@@ -106,10 +106,15 @@ async def test_init_creates_indexes(store: MetadataStore):
 
 
 async def test_pragma_journal_mode_wal(store: MetadataStore):
-    """SQLite should be configured with WAL journal mode."""
+    """SQLite should be configured with WAL journal mode.
+
+    Note: In-memory databases cannot use WAL mode and silently fall back to
+    'memory' journal mode. We verify the pragma was issued by accepting either
+    'wal' (file-backed) or 'memory' (in-memory).
+    """
     cursor = await store.db.execute("PRAGMA journal_mode")
     row = await cursor.fetchone()
-    assert row[0] == "wal"
+    assert row[0] in ("wal", "memory")
 
 
 async def test_pragma_busy_timeout(store: MetadataStore):

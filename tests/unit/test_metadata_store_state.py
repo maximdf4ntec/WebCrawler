@@ -62,13 +62,15 @@ class TestMarkCompleted:
         """Completes the URL and stores content hash, content type, and metadata."""
         token = await _enqueue_and_lease(store, "https://example.com/page")
 
-        await store.mark_completed(
+        result = await store.mark_completed(
             "https://example.com/page",
             lease_token=token,
             content_hash="abc123def456",
             content_type="text/html",
             metadata={"page_title": "Hello", "link_count": 5},
         )
+
+        assert result is True
 
         cursor = await store.db.execute(
             "SELECT crawl_state, content_hash, content_type, lease_token, lease_expires_at "
@@ -89,13 +91,15 @@ class TestMarkCompleted:
         """A stale/wrong lease token causes the write to be rejected."""
         await _enqueue_and_lease(store, "https://example.com/page")
 
-        # Attempt completion with wrong token — should not transition state
-        await store.mark_completed(
+        # Attempt completion with wrong token — should return False
+        result = await store.mark_completed(
             "https://example.com/page",
             lease_token="wrong-token-xyz",
             content_hash="abc123",
             content_type="text/html",
         )
+
+        assert result is False
 
         cursor = await store.db.execute(
             "SELECT crawl_state FROM url_records WHERE normalized_url = ?",
@@ -113,13 +117,15 @@ class TestMarkCompleted:
             "https://example.com/pending", "https://example.com/pending", depth=0
         )
 
-        # URL is in Pending state — should reject
-        await store.mark_completed(
+        # URL is in Pending state — should reject and return False
+        result = await store.mark_completed(
             "https://example.com/pending",
             lease_token="any-token",
             content_hash="abc",
             content_type="text/html",
         )
+
+        assert result is False
 
         cursor = await store.db.execute(
             "SELECT crawl_state FROM url_records WHERE normalized_url = ?",
@@ -135,12 +141,14 @@ class TestMarkCompleted:
         """Completion sets the last_crawl_timestamp field."""
         token = await _enqueue_and_lease(store, "https://example.com/ts")
 
-        await store.mark_completed(
+        result = await store.mark_completed(
             "https://example.com/ts",
             lease_token=token,
             content_hash="hash1",
             content_type="text/html",
         )
+
+        assert result is True
 
         cursor = await store.db.execute(
             "SELECT last_crawl_timestamp FROM url_records WHERE normalized_url = ?",
@@ -164,13 +172,15 @@ class TestMarkRetry:
         token = await _enqueue_and_lease(store, "https://example.com/fail")
         next_at = int(time.time() * 1000) + 5000
 
-        await store.mark_retry(
+        result = await store.mark_retry(
             "https://example.com/fail",
             lease_token=token,
             retry_count=1,
             next_retry_at=next_at,
             reason="server error",
         )
+
+        assert result is True
 
         cursor = await store.db.execute(
             "SELECT crawl_state, retry_count, next_retry_at, failure_reason "
@@ -185,16 +195,18 @@ class TestMarkRetry:
 
     @pytest.mark.asyncio
     async def test_mark_retry_rejects_wrong_token(self, store: MetadataStore) -> None:
-        """Wrong lease token leaves state unchanged."""
+        """Wrong lease token leaves state unchanged and returns False."""
         await _enqueue_and_lease(store, "https://example.com/x")
 
-        await store.mark_retry(
+        result = await store.mark_retry(
             "https://example.com/x",
             lease_token="bad-token",
             retry_count=1,
             next_retry_at=int(time.time() * 1000) + 5000,
             reason="timeout",
         )
+
+        assert result is False
 
         cursor = await store.db.execute(
             "SELECT crawl_state FROM url_records WHERE normalized_url = ?",
@@ -219,11 +231,13 @@ class TestMarkTerminalFailed:
         """Sets Terminal_Failed state with failure reason, clears lease."""
         token = await _enqueue_and_lease(store, "https://example.com/gone")
 
-        await store.mark_terminal_failed(
+        result = await store.mark_terminal_failed(
             "https://example.com/gone",
             lease_token=token,
             reason="not found",
         )
+
+        assert result is True
 
         cursor = await store.db.execute(
             "SELECT crawl_state, failure_reason, lease_token, lease_expires_at "
@@ -240,14 +254,16 @@ class TestMarkTerminalFailed:
     async def test_mark_terminal_failed_rejects_wrong_token(
         self, store: MetadataStore
     ) -> None:
-        """Wrong token leaves state unchanged."""
+        """Wrong token leaves state unchanged and returns False."""
         await _enqueue_and_lease(store, "https://example.com/x")
 
-        await store.mark_terminal_failed(
+        result = await store.mark_terminal_failed(
             "https://example.com/x",
             lease_token="stale",
             reason="blocked",
         )
+
+        assert result is False
 
         cursor = await store.db.execute(
             "SELECT crawl_state FROM url_records WHERE normalized_url = ?",
@@ -267,26 +283,31 @@ class TestMarkFailed:
 
     @pytest.mark.asyncio
     async def test_mark_failed_sets_state(self, store: MetadataStore) -> None:
-        """Transitions URL to Failed state (max retries exhausted)."""
+        """Transitions URL from Retry to Failed state (max retries exhausted)."""
         token = await _enqueue_and_lease(store, "https://example.com/exhausted")
 
         # First put it in Retry state
-        await store.mark_retry(
+        retry_result = await store.mark_retry(
             "https://example.com/exhausted",
             lease_token=token,
             retry_count=3,
             next_retry_at=int(time.time() * 1000),
             reason="repeated failure",
         )
+        assert retry_result is True
 
-        await store.mark_failed("https://example.com/exhausted")
+        result = await store.mark_failed(
+            "https://example.com/exhausted", reason="max retries exceeded"
+        )
+        assert result is True
 
         cursor = await store.db.execute(
-            "SELECT crawl_state FROM url_records WHERE normalized_url = ?",
+            "SELECT crawl_state, failure_reason FROM url_records WHERE normalized_url = ?",
             ("https://example.com/exhausted",),
         )
         row = await cursor.fetchone()
         assert row["crawl_state"] == "Failed"
+        assert row["failure_reason"] == "max retries exceeded"
 
 
 # ---------------------------------------------------------------------------
@@ -335,11 +356,15 @@ class TestGetContentHash:
         await store.enqueue(
             "https://example.com/pending", "https://example.com/pending", depth=0
         )
+        # Prove the URL exists (store is real), but has no hash yet
+        assert await store.exists("https://example.com/pending") is True
         result = await store.get_content_hash("https://example.com/pending")
         assert result is None
 
     @pytest.mark.asyncio
     async def test_returns_none_for_missing_url(self, store: MetadataStore) -> None:
+        # Prove the URL genuinely doesn't exist in the store
+        assert await store.exists("https://example.com/nonexistent") is False
         result = await store.get_content_hash("https://example.com/nonexistent")
         assert result is None
 

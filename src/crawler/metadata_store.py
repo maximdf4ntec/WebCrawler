@@ -15,7 +15,14 @@ from typing import Optional
 import aiosqlite
 
 from crawler.logger import get_logger
-from crawler.types import CrawlerConfig, LeaseResult
+from crawler.types import (
+    CrawlerConfig,
+    HtmlMetadata,
+    ImageMetadata,
+    LeaseResult,
+    PdfMetadata,
+    VideoMetadata,
+)
 
 logger = get_logger()
 
@@ -449,3 +456,463 @@ class MetadataStore:
         await self.db.commit()
 
         return cursor.rowcount
+
+    # ------------------------------------------------------------------
+    # State Transitions and Queries (Task 3.3)
+    # Requirements: 16.4, 16.5, 16.6, 8.3, 14.2, 20.1, 20.2, 20.3, 20.4
+    # ------------------------------------------------------------------
+
+    async def mark_completed(
+        self,
+        normalized_url: str,
+        lease_token: str,
+        content_hash: Optional[str] = None,
+        content_type: Optional[str] = None,
+        etag: Optional[str] = None,
+        metadata: Optional[dict] = None,
+    ) -> bool:
+        """Mark a URL as successfully completed.
+
+        Validates the lease token to reject stale writes. If the token does
+        not match (lease was stolen/expired), the transition is rejected.
+
+        Args:
+            normalized_url: The URL to mark as completed.
+            lease_token: The lease token that must match the current holder.
+            content_hash: SHA-256 hash of the downloaded content.
+            content_type: MIME type of the content.
+            etag: ETag header value from the response.
+            metadata: Optional dict of type-specific metadata (ignored here,
+                      stored separately via store_*_metadata methods).
+
+        Returns:
+            True if the transition succeeded, False if rejected (stale write).
+        """
+        cursor = await self.db.execute(
+            """
+            UPDATE url_records
+            SET crawl_state = 'Completed',
+                content_hash = ?,
+                content_type = ?,
+                etag = ?,
+                last_crawl_timestamp = datetime('now'),
+                lease_token = NULL,
+                lease_expires_at = NULL
+            WHERE normalized_url = ?
+              AND lease_token = ?
+              AND crawl_state = 'In_Progress'
+            """,
+            (content_hash, content_type, etag, normalized_url, lease_token),
+        )
+        await self.db.commit()
+
+        success = cursor.rowcount > 0
+        if success:
+            logger.state_transition(
+                url=normalized_url,
+                from_state="In_Progress",
+                to_state="Completed",
+            )
+        return success
+
+    async def mark_retry(
+        self,
+        normalized_url: str,
+        lease_token: str,
+        retry_count: int,
+        next_retry_at: Optional[int] = None,
+        next_retry_at_ms: Optional[int] = None,
+        reason: Optional[str] = None,
+    ) -> bool:
+        """Mark a URL for retry with backoff scheduling.
+
+        Validates the lease token to reject stale writes. Records the retry
+        count and next eligible retry timestamp.
+
+        Args:
+            normalized_url: The URL to mark for retry.
+            lease_token: The lease token that must match the current holder.
+            retry_count: The updated retry attempt count.
+            next_retry_at: Unix timestamp (ms) when this URL becomes eligible again.
+            next_retry_at_ms: Alias for next_retry_at (either can be used).
+            reason: Human-readable failure reason for the retry.
+
+        Returns:
+            True if the transition succeeded, False if rejected (stale write).
+        """
+        # Support both parameter names
+        retry_at = next_retry_at if next_retry_at is not None else next_retry_at_ms
+
+        cursor = await self.db.execute(
+            """
+            UPDATE url_records
+            SET crawl_state = 'Retry',
+                retry_count = ?,
+                next_retry_at = ?,
+                failure_reason = ?,
+                lease_token = NULL,
+                lease_expires_at = NULL
+            WHERE normalized_url = ?
+              AND lease_token = ?
+              AND crawl_state = 'In_Progress'
+            """,
+            (retry_count, retry_at, reason, normalized_url, lease_token),
+        )
+        await self.db.commit()
+
+        success = cursor.rowcount > 0
+        if success:
+            logger.state_transition(
+                url=normalized_url,
+                from_state="In_Progress",
+                to_state="Retry",
+                retry_count=retry_count,
+                next_retry_at_ms=retry_at,
+            )
+        return success
+
+    async def mark_terminal_failed(
+        self,
+        normalized_url: str,
+        lease_token: str,
+        failure_reason: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> bool:
+        """Mark a URL as terminally failed (non-recoverable).
+
+        Used for permanent errors (404, 403, unsupported content type, etc.)
+        where retrying would not help.
+
+        Args:
+            normalized_url: The URL to mark as terminally failed.
+            lease_token: The lease token that must match the current holder.
+            failure_reason: Human-readable description of the failure.
+            reason: Alias for failure_reason (either can be used).
+
+        Returns:
+            True if the transition succeeded, False if rejected (stale write).
+        """
+        the_reason = failure_reason if failure_reason is not None else reason
+
+        cursor = await self.db.execute(
+            """
+            UPDATE url_records
+            SET crawl_state = 'Terminal_Failed',
+                failure_reason = ?,
+                lease_token = NULL,
+                lease_expires_at = NULL
+            WHERE normalized_url = ?
+              AND lease_token = ?
+              AND crawl_state = 'In_Progress'
+            """,
+            (the_reason, normalized_url, lease_token),
+        )
+        await self.db.commit()
+
+        success = cursor.rowcount > 0
+        if success:
+            logger.state_transition(
+                url=normalized_url,
+                from_state="In_Progress",
+                to_state="Terminal_Failed",
+                failure_reason=the_reason,
+            )
+        return success
+
+    async def mark_failed(
+        self,
+        normalized_url: str,
+        lease_token: Optional[str] = None,
+        failure_reason: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> bool:
+        """Mark a URL as failed (max retries exceeded).
+
+        Can be called either:
+          - With a lease_token: validates token and transitions from In_Progress → Failed
+          - Without a lease_token: transitions directly from Retry → Failed (for scheduler use)
+
+        Args:
+            normalized_url: The URL to mark as failed.
+            lease_token: The lease token (optional — if None, transitions from Retry).
+            failure_reason: Human-readable description of the failure.
+            reason: Alias for failure_reason (either can be used).
+
+        Returns:
+            True if the transition succeeded, False if rejected.
+        """
+        the_reason = failure_reason if failure_reason is not None else reason
+
+        if lease_token is not None:
+            # Lease-validated transition from In_Progress
+            cursor = await self.db.execute(
+                """
+                UPDATE url_records
+                SET crawl_state = 'Failed',
+                    failure_reason = ?,
+                    lease_token = NULL,
+                    lease_expires_at = NULL
+                WHERE normalized_url = ?
+                  AND lease_token = ?
+                  AND crawl_state = 'In_Progress'
+                """,
+                (the_reason, normalized_url, lease_token),
+            )
+        else:
+            # Direct transition from Retry (scheduler marks exhausted retries)
+            cursor = await self.db.execute(
+                """
+                UPDATE url_records
+                SET crawl_state = 'Failed',
+                    failure_reason = COALESCE(?, failure_reason),
+                    lease_token = NULL,
+                    lease_expires_at = NULL
+                WHERE normalized_url = ?
+                  AND crawl_state = 'Retry'
+                """,
+                (the_reason, normalized_url),
+            )
+        await self.db.commit()
+
+        success = cursor.rowcount > 0
+        if success:
+            from_state = "In_Progress" if lease_token else "Retry"
+            logger.state_transition(
+                url=normalized_url,
+                from_state=from_state,
+                to_state="Failed",
+                failure_reason=the_reason,
+            )
+        return success
+
+    # ------------------------------------------------------------------
+    # Query methods
+    # ------------------------------------------------------------------
+
+    async def exists(self, normalized_url: str) -> bool:
+        """Check if a URL record exists in the store.
+
+        Args:
+            normalized_url: The URL to check.
+
+        Returns:
+            True if the URL exists, False otherwise.
+        """
+        cursor = await self.db.execute(
+            "SELECT 1 FROM url_records WHERE normalized_url = ?",
+            (normalized_url,),
+        )
+        row = await cursor.fetchone()
+        return row is not None
+
+    async def get_content_hash(self, normalized_url: str) -> Optional[str]:
+        """Retrieve the content hash for a URL.
+
+        Args:
+            normalized_url: The URL to look up.
+
+        Returns:
+            The content_hash string, or None if the URL doesn't exist
+            or has no hash stored.
+        """
+        cursor = await self.db.execute(
+            "SELECT content_hash FROM url_records WHERE normalized_url = ?",
+            (normalized_url,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return row["content_hash"]
+
+    async def get_urls_by_state(self, state: str, limit: int = 500) -> list[dict]:
+        """Retrieve URL records filtered by crawl state.
+
+        Args:
+            state: The crawl state to filter by (e.g. 'Pending', 'Completed').
+            limit: Maximum number of records to return (1–500).
+
+        Returns:
+            List of URL record dictionaries.
+        """
+        # Clamp limit to valid range per Req 16.6
+        limit = max(1, min(limit, 500))
+
+        cursor = await self.db.execute(
+            "SELECT * FROM url_records WHERE crawl_state = ? LIMIT ?",
+            (state, limit),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def get_state_counts(self) -> dict[str, int]:
+        """Get the count of URLs in each crawl state.
+
+        Returns:
+            Dictionary mapping state name to count.
+        """
+        cursor = await self.db.execute(
+            "SELECT crawl_state, COUNT(*) as cnt FROM url_records GROUP BY crawl_state"
+        )
+        rows = await cursor.fetchall()
+        return {row["crawl_state"]: row["cnt"] for row in rows}
+
+    async def get_child_urls(self, parent_url: str) -> list[dict]:
+        """Get all URLs discovered from a given parent URL.
+
+        Args:
+            parent_url: The normalized parent URL to query children of.
+
+        Returns:
+            List of URL record dicts that have this parent.
+        """
+        cursor = await self.db.execute(
+            "SELECT * FROM url_records WHERE parent_url = ?",
+            (parent_url,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def get_redirect_count(self, normalized_url: str) -> int:
+        """Get the redirect count for a URL.
+
+        Args:
+            normalized_url: The URL to look up.
+
+        Returns:
+            The redirect_count value, or 0 if the URL doesn't exist.
+        """
+        cursor = await self.db.execute(
+            "SELECT redirect_count FROM url_records WHERE normalized_url = ?",
+            (normalized_url,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return 0
+        return row["redirect_count"]
+
+    # ------------------------------------------------------------------
+    # Type-specific metadata storage
+    # ------------------------------------------------------------------
+
+    async def store_html_metadata(
+        self,
+        normalized_url: str,
+        metadata: Optional["HtmlMetadata"] = None,
+        page_title: Optional[str] = None,
+        link_count: Optional[int] = None,
+    ) -> None:
+        """Store HTML-specific metadata for a URL.
+
+        Accepts either an HtmlMetadata model or individual field values.
+
+        Args:
+            normalized_url: The URL this metadata belongs to.
+            metadata: An HtmlMetadata model (if provided, overrides individual args).
+            page_title: The title of the HTML page.
+            link_count: Number of links found on the page.
+        """
+        if metadata is not None:
+            page_title = metadata.page_title
+            link_count = metadata.link_count
+
+        await self.db.execute(
+            """
+            INSERT OR REPLACE INTO html_metadata (normalized_url, page_title, link_count)
+            VALUES (?, ?, ?)
+            """,
+            (normalized_url, page_title or "", link_count or 0),
+        )
+        await self.db.commit()
+
+    async def store_image_metadata(
+        self,
+        normalized_url: str,
+        metadata: Optional["ImageMetadata"] = None,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        file_size_bytes: Optional[int] = None,
+    ) -> None:
+        """Store image-specific metadata for a URL.
+
+        Accepts either an ImageMetadata model or individual field values.
+
+        Args:
+            normalized_url: The URL this metadata belongs to.
+            metadata: An ImageMetadata model (if provided, overrides individual args).
+            width: Image width in pixels (nullable).
+            height: Image height in pixels (nullable).
+            file_size_bytes: Size of the image file in bytes.
+        """
+        if metadata is not None:
+            width = metadata.width
+            height = metadata.height
+            file_size_bytes = metadata.file_size_bytes
+
+        await self.db.execute(
+            """
+            INSERT OR REPLACE INTO image_metadata (normalized_url, width, height, file_size_bytes)
+            VALUES (?, ?, ?, ?)
+            """,
+            (normalized_url, width, height, file_size_bytes),
+        )
+        await self.db.commit()
+
+    async def store_video_metadata(
+        self,
+        normalized_url: str,
+        metadata: Optional["VideoMetadata"] = None,
+        file_size_bytes: Optional[int] = None,
+        duration_seconds: Optional[float] = None,
+    ) -> None:
+        """Store video-specific metadata for a URL.
+
+        Accepts either a VideoMetadata model or individual field values.
+
+        Args:
+            normalized_url: The URL this metadata belongs to.
+            metadata: A VideoMetadata model (if provided, overrides individual args).
+            file_size_bytes: Size of the video file in bytes.
+            duration_seconds: Duration of the video in seconds (nullable).
+        """
+        if metadata is not None:
+            file_size_bytes = metadata.file_size_bytes
+            duration_seconds = metadata.duration_seconds
+
+        await self.db.execute(
+            """
+            INSERT OR REPLACE INTO video_metadata (normalized_url, file_size_bytes, duration_seconds)
+            VALUES (?, ?, ?)
+            """,
+            (normalized_url, file_size_bytes, duration_seconds),
+        )
+        await self.db.commit()
+
+    async def store_pdf_metadata(
+        self,
+        normalized_url: str,
+        metadata: Optional["PdfMetadata"] = None,
+        page_count: Optional[int] = None,
+        document_title: Optional[str] = None,
+    ) -> None:
+        """Store PDF-specific metadata for a URL.
+
+        Accepts either a PdfMetadata model or individual field values.
+
+        Args:
+            normalized_url: The URL this metadata belongs to.
+            metadata: A PdfMetadata model (if provided, overrides individual args).
+            page_count: Number of pages in the PDF (nullable).
+            document_title: Title of the PDF document (nullable).
+        """
+        if metadata is not None:
+            page_count = metadata.page_count
+            document_title = metadata.document_title
+
+        await self.db.execute(
+            """
+            INSERT OR REPLACE INTO pdf_metadata (normalized_url, page_count, document_title)
+            VALUES (?, ?, ?)
+            """,
+            (normalized_url, page_count, document_title),
+        )
+        await self.db.commit()

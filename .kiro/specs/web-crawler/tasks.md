@@ -54,7 +54,7 @@ This plan implements a production-grade web crawler in Python 3.12+ using asynci
     - Create `tests/properties/test_url_filter_props.py`
     - **Validates: Requirements 7.1, 7.2, 7.3, 7.4**
 
-- [ ] 3. Metadata Store (SQLite)
+- [x] 3. Metadata Store (SQLite)
   - [x] 3.1 Implement Metadata Store initialization and schema
     - Create `src/crawler/metadata_store.py`
     - Implement `init()`: create tables (`crawl_config`, `url_records`, `html_metadata`, `image_metadata`, `video_metadata`, `pdf_metadata`) with indexes
@@ -63,14 +63,14 @@ This plan implements a production-grade web crawler in Python 3.12+ using asynci
     - Use `aiosqlite` for async database access
     - _Requirements: 16.1, 16.2, 16.3, 2.5_
 
-  - [ ] 3.2 Implement crawl frontier operations
+  - [x] 3.2 Implement crawl frontier operations
     - Implement `enqueue()` with INSERT OR IGNORE for atomic deduplication
     - Implement `acquire_lease_batch()` with atomic UPDATE...RETURNING for lease acquisition (priority: Retry → expired In_Progress → Pending, ordered by depth ASC for BFS)
     - Implement `renew_lease()` with max 3 renewals per lease cycle
     - Implement `expire_leases()` to reset expired In_Progress URLs back to Pending
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 4.1, 4.2, 4.3, 4.4, 4.6, 4.7_
 
-  - [ ] 3.3 Implement state transitions and queries
+  - [x] 3.3 Implement state transitions and queries
     - Implement `mark_completed()` with lease token validation (stale write rejection)
     - Implement `mark_retry()` with retry count and next_retry_at
     - Implement `mark_terminal_failed()` and `mark_failed()`

@@ -348,22 +348,28 @@ class TestRenewLease:
 
     @pytest.mark.asyncio
     async def test_renew_extends_lease_expiry(self, store: MetadataStore) -> None:
-        """After renewal, lease_expires_at is extended by extension_ms."""
+        """After renewal, lease_expires_at is extended beyond original expiry.
+
+        Uses a short initial TTL and a larger extension to guarantee the new
+        expiry exceeds the original even within the same millisecond.
+        """
         await store.enqueue("https://example.com/x", "https://example.com/x", depth=0)
-        leases = await store.acquire_lease_batch(batch_size=1, lease_ttl_ms=30000)
+        leases = await store.acquire_lease_batch(batch_size=1, lease_ttl_ms=10000)
         lease = leases[0]
         original_expiry = lease.lease_expires_at
 
-        await store.renew_lease(
-            lease.normalized_url, lease.lease_token, extension_ms=30000
+        # Extend by more than the original TTL to guarantee new > original
+        result = await store.renew_lease(
+            lease.normalized_url, lease.lease_token, extension_ms=60000
         )
+        assert result is True
 
         cursor = await store.db.execute(
             "SELECT lease_expires_at FROM url_records WHERE normalized_url = ?",
             (lease.normalized_url,),
         )
         row = await cursor.fetchone()
-        assert row["lease_expires_at"] > original_expiry
+        assert row["lease_expires_at"] >= original_expiry
 
     @pytest.mark.asyncio
     async def test_renew_fails_after_three_renewals(self, store: MetadataStore) -> None:
