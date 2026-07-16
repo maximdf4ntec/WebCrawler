@@ -113,7 +113,7 @@ This plan implements a production-grade web crawler in Python 3.12+ using asynci
     - **Validates: Requirements 6.2, 6.5, 6.6**
 
 - [ ] 6. Worker and Worker Pool
-  - [ ] 6.1 Implement Worker Pool with bounded concurrency
+  - [x] 6.1 Implement Worker Pool with bounded concurrency
     - Create `src/crawler/worker_pool.py`
     - Implement using asyncio.Semaphore for concurrency control
     - Implement `dispatch()`, `has_capacity()`, `wait_for_slot()`, `active_count()`, `drain()`
