@@ -17,8 +17,6 @@ import time
 from typing import TYPE_CHECKING, Optional
 from urllib.parse import urlparse
 
-import httpx
-
 from crawler.logger import get_logger
 from crawler.types import CrawlerConfig, LeaseResult, WorkerResult
 from crawler.url_normalizer import URLNormalizer
@@ -26,6 +24,7 @@ from crawler.worker_pool import WorkerPool
 
 if TYPE_CHECKING:
     from crawler.content_dispatcher import ContentDispatcher
+    from crawler.fetcher import Fetcher
     from crawler.metadata_store import MetadataStore
     from crawler.rate_limiter import RateLimiter
     from crawler.url_filter import URLFilter
@@ -55,7 +54,7 @@ class Scheduler:
         self.rate_limiter: Optional[RateLimiter] = None
         self.content_dispatcher: Optional[ContentDispatcher] = None
         self.url_filter: Optional[URLFilter] = None
-        self.http_client: Optional[httpx.AsyncClient] = None
+        self.fetcher: Optional[Fetcher] = None
 
     async def init(self, config: CrawlerConfig, store: "MetadataStore") -> None:
         """Initialize the scheduler: validate config, seed the frontier.
@@ -233,7 +232,7 @@ class Scheduler:
         """Create a Worker instance with all collaborators attached.
 
         Wires config, metadata_store, url_normalizer, and any additional
-        collaborators (rate_limiter, content_dispatcher, url_filter, http_client)
+        collaborators (rate_limiter, content_dispatcher, url_filter, fetcher)
         that were injected into the scheduler by the application bootstrap.
         """
         from crawler.worker import Worker
@@ -250,8 +249,8 @@ class Scheduler:
             worker.content_dispatcher = self.content_dispatcher
         if self.url_filter is not None:
             worker.url_filter = self.url_filter
-        if self.http_client is not None:
-            worker.http_client = self.http_client
+        if self.fetcher is not None:
+            worker.fetcher = self.fetcher
 
         return worker
 

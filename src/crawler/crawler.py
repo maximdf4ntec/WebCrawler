@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 import httpx
 
 from crawler.content_dispatcher import ContentDispatcher
+from crawler.fetcher import HttpFetcher, MockApiFetcher
 from crawler.logger import get_logger
 from crawler.metadata_store import MetadataStore
 from crawler.processors.html_processor import HtmlProcessor
@@ -171,12 +172,16 @@ class Crawler:
         self,
         db_path: str = "crawl.db",
         output_path: str = "output",
+        *,
+        use_mock_api: bool = True,
     ) -> None:
         """Initialize the Crawler.
 
         Args:
             db_path: Path to the SQLite database file.
             output_path: Base path for output directories.
+            use_mock_api: If True (default), use MockApiFetcher for the mock
+                Fetch API. If False, use HttpFetcher for real HTTP requests.
         """
         self._db_path = db_path
         self._output_path = Path(output_path)
@@ -184,6 +189,7 @@ class Crawler:
         self._scheduler: Optional[Scheduler] = None
         self._http_client: Optional[httpx.AsyncClient] = None
         self._start_time_ms: int = 0
+        self._use_mock_api = use_mock_api
 
     async def start(self, config_path: Path) -> CrawlResult:
         """Load config from YAML, validate, freeze to DB, and begin crawling.
@@ -257,11 +263,14 @@ class Crawler:
         # Wire collaborators to the scheduler so it can inject them into workers
         rate_limiter = RateLimiter(max_concurrency=config.max_concurrency)
 
-        content_dispatcher = ContentDispatcher()
-        content_dispatcher.register("text/html", HtmlProcessor())
-        content_dispatcher.register("image/", ImageProcessor())
-        content_dispatcher.register("video/", VideoProcessor())
-        content_dispatcher.register("application/pdf", PdfProcessor())
+        output_dir = str(self._output_path)
+        content_dispatcher = ContentDispatcher(output_dir=output_dir)
+        content_dispatcher.register("text/html", HtmlProcessor(output_dir=output_dir))
+        content_dispatcher.register("image/", ImageProcessor(output_dir=output_dir))
+        content_dispatcher.register("video/", VideoProcessor(output_dir=output_dir))
+        content_dispatcher.register(
+            "application/pdf", PdfProcessor(output_dir=output_dir)
+        )
 
         url_normalizer = URLNormalizer()
         url_filter = URLFilter(
@@ -275,10 +284,16 @@ class Crawler:
         # Shared httpx client for connection pooling across workers
         self._http_client = httpx.AsyncClient(timeout=30.0)
 
+        # Create fetcher based on configuration
+        if self._use_mock_api:
+            fetcher = MockApiFetcher(client=self._http_client)
+        else:
+            fetcher = HttpFetcher(client=self._http_client)
+
         self._scheduler.rate_limiter = rate_limiter
         self._scheduler.content_dispatcher = content_dispatcher
         self._scheduler.url_filter = url_filter
-        self._scheduler.http_client = self._http_client
+        self._scheduler.fetcher = fetcher
 
         await self._scheduler.init(config, self._store)
         await self._scheduler.run()
@@ -343,11 +358,14 @@ class Crawler:
 
         rate_limiter = RateLimiter(max_concurrency=config.max_concurrency)
 
-        content_dispatcher = ContentDispatcher()
-        content_dispatcher.register("text/html", HtmlProcessor())
-        content_dispatcher.register("image/", ImageProcessor())
-        content_dispatcher.register("video/", VideoProcessor())
-        content_dispatcher.register("application/pdf", PdfProcessor())
+        output_dir = str(self._output_path)
+        content_dispatcher = ContentDispatcher(output_dir=output_dir)
+        content_dispatcher.register("text/html", HtmlProcessor(output_dir=output_dir))
+        content_dispatcher.register("image/", ImageProcessor(output_dir=output_dir))
+        content_dispatcher.register("video/", VideoProcessor(output_dir=output_dir))
+        content_dispatcher.register(
+            "application/pdf", PdfProcessor(output_dir=output_dir)
+        )
 
         url_filter = URLFilter(
             seed_domain=resume_seed_domain,
@@ -359,10 +377,16 @@ class Crawler:
 
         self._http_client = httpx.AsyncClient(timeout=30.0)
 
+        # Create fetcher based on configuration
+        if self._use_mock_api:
+            fetcher = MockApiFetcher(client=self._http_client)
+        else:
+            fetcher = HttpFetcher(client=self._http_client)
+
         self._scheduler.rate_limiter = rate_limiter
         self._scheduler.content_dispatcher = content_dispatcher
         self._scheduler.url_filter = url_filter
-        self._scheduler.http_client = self._http_client
+        self._scheduler.fetcher = fetcher
 
         await self._scheduler.init(config, self._store)
         await self._scheduler.run()

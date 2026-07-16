@@ -119,7 +119,7 @@ def _make_worker(
 
     # URL filter
     worker.url_filter = Mock()
-    worker.url_filter.passes = Mock(return_value=filter_passes)
+    worker.url_filter.passes = AsyncMock(return_value=filter_passes)
 
     return worker
 

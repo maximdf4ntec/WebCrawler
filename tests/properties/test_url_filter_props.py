@@ -4,7 +4,8 @@ Feature: web-crawler
 Properties: 3 (Domain/Scheme/Depth Enforcement), 4 (Exclude Pattern Precedence)
 """
 
-from unittest.mock import Mock
+import asyncio
+from unittest.mock import AsyncMock, Mock
 
 from hypothesis import given, settings, assume, strategies as st
 import pytest
@@ -18,7 +19,7 @@ from crawler.url_filter import URLFilter
 def _mock_store(*, exists_return: bool = False) -> Mock:
     """Create a mock MetadataStore that returns a fixed value for exists()."""
     store = Mock()
-    store.exists = Mock(return_value=exists_return)
+    store.exists = AsyncMock(return_value=exists_return)
     return store
 
 
@@ -36,6 +37,11 @@ def _make_filter(
         exclude_patterns=exclude_patterns or [],
         store=_mock_store(exists_return=store_exists),
     )
+
+
+def _passes_sync(url_filter: URLFilter, url: str, depth: int) -> bool:
+    """Run async passes() synchronously for hypothesis compatibility."""
+    return asyncio.run(url_filter.passes(url, depth))
 
 
 # --- Strategies ---
@@ -88,14 +94,14 @@ class TestProperty3_DomainSchemeDepthEnforcement:
     def test_rejects_non_http_https_scheme(self, url: str) -> None:
         """Any URL with scheme != http|https is rejected regardless of other criteria."""
         url_filter = _make_filter(seed_domain="example.com", max_depth=None)
-        assert url_filter.passes(url, depth=0) is False
+        assert _passes_sync(url_filter, url, depth=0) is False
 
     @given(url=different_domain_urls(seed_domain="example.com"))
     @settings(max_examples=50)
     def test_rejects_different_domain(self, url: str) -> None:
         """Any URL whose domain != seed_domain is rejected."""
         url_filter = _make_filter(seed_domain="example.com", max_depth=None)
-        assert url_filter.passes(url, depth=0) is False
+        assert _passes_sync(url_filter, url, depth=0) is False
 
     @given(
         url=same_domain_urls(domain="example.com"),
@@ -106,7 +112,7 @@ class TestProperty3_DomainSchemeDepthEnforcement:
         """URL at depth > max_depth is rejected."""
         url_filter = _make_filter(seed_domain="example.com", max_depth=max_depth)
         over_depth = max_depth + 1
-        assert url_filter.passes(url, depth=over_depth) is False
+        assert _passes_sync(url_filter, url, depth=over_depth) is False
 
     @given(
         url=same_domain_urls(domain="example.com"),
@@ -121,7 +127,7 @@ class TestProperty3_DomainSchemeDepthEnforcement:
         assume(depth <= max_depth)
         url_filter = _make_filter(seed_domain="example.com", max_depth=max_depth)
         # If depth is within range and no other filter rejects, it should pass
-        result = url_filter.passes(url, depth=depth)
+        result = _passes_sync(url_filter, url, depth=depth)
         # We can only assert it wasn't rejected for depth reasons,
         # but since seed_domain matches, scheme is valid, no patterns, no dedup → should pass
         assert result is True
@@ -132,7 +138,7 @@ class TestProperty3_DomainSchemeDepthEnforcement:
         """When max_depth is None, no depth-based rejection occurs."""
         url_filter = _make_filter(seed_domain="example.com", max_depth=None)
         # Even at very high depth, it passes
-        assert url_filter.passes(url, depth=9999) is True
+        assert _passes_sync(url_filter, url, depth=9999) is True
 
 
 # --- Property 4: Exclude Pattern Precedence ---
@@ -156,7 +162,7 @@ class TestProperty4_ExcludePatternPrecedence:
             include_patterns=[pattern],
             exclude_patterns=[pattern],
         )
-        assert url_filter.passes(url, depth=0) is False
+        assert _passes_sync(url_filter, url, depth=0) is False
 
     @given(
         path_segment=st.from_regex(r"[a-z]{3,8}", fullmatch=True),
@@ -171,7 +177,7 @@ class TestProperty4_ExcludePatternPrecedence:
             include_patterns=[],
             exclude_patterns=[path_segment],
         )
-        assert url_filter.passes(url, depth=0) is False
+        assert _passes_sync(url_filter, url, depth=0) is False
 
     @given(
         path_segment=st.from_regex(r"[a-z]{3,8}", fullmatch=True),
@@ -191,4 +197,4 @@ class TestProperty4_ExcludePatternPrecedence:
             include_patterns=[f"^https://example\\.com/{other_segment}$"],
             exclude_patterns=[],
         )
-        assert url_filter.passes(url, depth=0) is False
+        assert _passes_sync(url_filter, url, depth=0) is False

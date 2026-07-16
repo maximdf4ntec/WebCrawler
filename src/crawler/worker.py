@@ -16,9 +16,6 @@ import asyncio
 import contextlib
 import hashlib
 from typing import TYPE_CHECKING, Optional
-from urllib.parse import quote
-
-import httpx
 
 from crawler.types import (
     CrawlerConfig,
@@ -31,6 +28,7 @@ from crawler.types import (
 )
 
 if TYPE_CHECKING:
+    from crawler.fetcher import Fetcher
     from crawler.metadata_store import MetadataStore
     from crawler.rate_limiter import RateLimiter
     from crawler.url_filter import URLFilter
@@ -47,7 +45,7 @@ class Worker:
         metadata_store: MetadataStore
         url_normalizer: URLNormalizer (normalize(url) → Optional[str])
         url_filter: URLFilter (passes(url, depth) → bool)
-        http_client: Optional httpx.AsyncClient for connection reuse
+        fetcher: Fetcher (pluggable fetch strategy — mock API or real HTTP)
     """
 
     config: CrawlerConfig
@@ -56,10 +54,7 @@ class Worker:
     metadata_store: MetadataStore
     url_normalizer: URLNormalizer
     url_filter: URLFilter
-    # Optional shared client for connection pooling. When None, a per-request
-    # client is created (acceptable for the mock Fetch API, but suboptimal
-    # for production workloads where connection reuse matters).
-    http_client: Optional[httpx.AsyncClient]
+    fetcher: Fetcher
 
     async def process_url(self, lease: LeaseResult) -> WorkerResult:
         """Process a leased URL and return the outcome.
@@ -79,7 +74,7 @@ class Worker:
         """Core processing logic: fetch, classify status, dispatch."""
         try:
             response = await self.rate_limiter.execute(
-                lambda: self.fetch_url(lease.url)
+                lambda: self.fetcher.fetch(lease.url)
             )
 
             match response.status_code:
@@ -147,7 +142,9 @@ class Worker:
         content_hash = hashlib.sha256(response.body).hexdigest()
 
         # Dispatch to content processor
-        result = await self.content_dispatcher.process(response, lease)
+        result = await self.content_dispatcher.process(
+            response, lease, self.metadata_store
+        )
 
         # Enqueue discovered URLs
         if result and result.discovered_urls:
@@ -196,7 +193,7 @@ class Worker:
 
         # Normalize and filter the redirect target
         normalized = self.url_normalizer.normalize(redirect_url)
-        if normalized and self.url_filter.passes(normalized, lease.depth):
+        if normalized and await self.url_filter.passes(normalized, lease.depth):
             await self.metadata_store.enqueue(
                 normalized,
                 redirect_url,
@@ -223,7 +220,7 @@ class Worker:
         """Normalize, filter, and enqueue discovered URLs."""
         for url in urls:
             normalized = self.url_normalizer.normalize(url)
-            if normalized and self.url_filter.passes(normalized, depth):
+            if normalized and await self.url_filter.passes(normalized, depth):
                 await self.metadata_store.enqueue(normalized, url, depth, None)
 
     # ------------------------------------------------------------------
@@ -245,44 +242,6 @@ class Worker:
             if not success:
                 break
             renewals += 1
-
-    # ------------------------------------------------------------------
-    # HTTP fetch
-    # ------------------------------------------------------------------
-
-    async def fetch_url(self, url: str) -> FetchResponse:
-        """Fetch a URL via the mock Fetch API using httpx.
-
-        Raises:
-            TransientError: If the response is not valid JSON or is missing
-                required fields (statusCode, headers, body). Per Req 5.9,
-                malformed responses are transient and should be retried.
-        """
-        encoded_url = quote(url, safe="")
-        client = getattr(self, "http_client", None)
-        try:
-            if client is not None:
-                resp = await client.get(
-                    f"http://mock-api.mock.com/fetch?url={encoded_url}"
-                )
-            else:
-                async with httpx.AsyncClient() as ephemeral_client:
-                    resp = await ephemeral_client.get(
-                        f"http://mock-api.mock.com/fetch?url={encoded_url}"
-                    )
-            data = resp.json()
-            body = data.get("body")
-            if isinstance(body, str):
-                body = body.encode("utf-8")
-            return FetchResponse(
-                status_code=data["statusCode"],
-                headers=data.get("headers", {}),
-                body=body,
-            )
-        except (ValueError, KeyError) as e:
-            # ValueError: JSON decode failure; KeyError: missing required fields.
-            # Per Requirement 5.9, treat as transient error for retry.
-            raise TransientError(f"malformed fetch response: {e}") from e
 
     # ------------------------------------------------------------------
     # Result helpers

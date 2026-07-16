@@ -92,7 +92,7 @@ class HtmlProcessor(BaseProcessor):
         """Parse HTML, extract links/title, persist, return result."""
         body = response.body or b""
         content_hash = self.compute_hash(body)
-        file_path = f"output/html/{content_hash}.html"
+        file_path = f"{self._output_dir}/html/{content_hash}.html"
 
         # Check if content is unchanged (deduplication / change detection)
         stored_hash = await store.get_content_hash(lease.normalized_url)  # type: ignore[attr-defined]

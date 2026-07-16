@@ -13,6 +13,14 @@ from crawler.types import FetchResponse, LeaseResult, ProcessorResult
 class BaseProcessor(ABC):
     """Abstract base class for all content type processors."""
 
+    def __init__(self, output_dir: str = "output") -> None:
+        """Initialize the processor.
+
+        Args:
+            output_dir: Base directory for persisting content files.
+        """
+        self._output_dir = output_dir
+
     @abstractmethod
     async def process(
         self, response: FetchResponse, lease: LeaseResult, store: object
@@ -44,8 +52,9 @@ class ContentDispatcher:
     "image/"). Dispatch does exact match first, then falls back to prefix match.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, output_dir: str = "output") -> None:
         self._processors: dict[str, BaseProcessor] = {}
+        self._output_dir = output_dir
 
     def register(self, mime_prefix: str, processor: BaseProcessor) -> None:
         """Register a processor for a given MIME type or prefix."""

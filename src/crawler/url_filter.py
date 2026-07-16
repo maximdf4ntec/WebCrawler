@@ -34,7 +34,7 @@ class URLFilter:
             config = PipelineConfig.default()
         self._pipeline = build_filter_pipeline(config)
 
-    def passes(self, url: str, depth: int) -> bool:
+    async def passes(self, url: str, depth: int) -> bool:
         """Returns True if URL passes all filter checks (short-circuits on first rejection)."""
         parsed = urlparse(url)
         ctx = FilterContext(
@@ -47,4 +47,4 @@ class URLFilter:
             exclude_patterns=self._exclude_patterns,
             store=self._store,
         )
-        return self._pipeline.execute(ctx)
+        return await self._pipeline.execute(ctx)

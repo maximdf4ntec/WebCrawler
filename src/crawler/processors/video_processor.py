@@ -93,7 +93,7 @@ class VideoProcessor(BaseProcessor):
         ext = _mime_to_extension(content_type)
 
         # --- Persist file ---
-        file_path = f"output/videos/{content_hash}.{ext}"
+        file_path = f"{self._output_dir}/videos/{content_hash}.{ext}"
         await self.write_file_if_not_exists(file_path, body)
 
         # --- Store metadata ---

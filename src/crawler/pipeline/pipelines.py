@@ -5,8 +5,11 @@ reconstructing a canonical URL from the resulting context.
 
 FilterPipeline runs an ordered list of FilterStep instances with short-circuit
 semantics: the first step that returns False terminates evaluation.
+Supports both synchronous and asynchronous filter steps.
 """
 
+import asyncio
+import inspect
 import logging
 from typing import Optional
 from urllib.parse import urlunparse
@@ -47,16 +50,26 @@ class NormalizationPipeline:
 
 
 class FilterPipeline:
-    """Executes an ordered list of FilterStep instances with short-circuit."""
+    """Executes an ordered list of FilterStep instances with short-circuit.
+
+    Supports both synchronous and asynchronous filter steps. The pipeline's
+    execute method is async to accommodate steps that need database access.
+    """
 
     def __init__(self, steps: list[FilterStep]) -> None:
         self._steps = steps
 
-    def execute(self, ctx: FilterContext) -> bool:
-        """Run steps in order. Return False on first rejection (short-circuit)."""
+    async def execute(self, ctx: FilterContext) -> bool:
+        """Run steps in order. Return False on first rejection (short-circuit).
+
+        Awaits steps whose execute() returns a coroutine (async steps).
+        """
         for step in self._steps:
             try:
-                if not step.execute(ctx):
+                result = step.execute(ctx)
+                if inspect.isawaitable(result):
+                    result = await result
+                if not result:
                     return False
             except Exception:
                 logger.warning(f"Filter step '{step.name}' raised for URL: {ctx.url}")

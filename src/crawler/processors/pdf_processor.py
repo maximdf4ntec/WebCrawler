@@ -44,7 +44,7 @@ class PdfProcessor(BaseProcessor):
             self._parse_pdf, body, lease.url
         )
 
-        file_path = f"output/pdfs/{content_hash}.pdf"
+        file_path = f"{self._output_dir}/pdfs/{content_hash}.pdf"
         await self.write_file_if_not_exists(file_path, body)
 
         # Store metadata in MetadataStore (if store is available)

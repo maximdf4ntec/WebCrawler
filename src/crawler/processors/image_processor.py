@@ -98,7 +98,7 @@ class ImageProcessor(BaseProcessor):
         # --- Content hash and file path ---
         content_hash = self.compute_hash(body)
         ext = mime_to_extension(content_type)
-        file_path = f"output/images/{content_hash}.{ext}"
+        file_path = f"{self._output_dir}/images/{content_hash}.{ext}"
 
         # --- Persist raw image to disk ---
         await self.write_file_if_not_exists(file_path, body)

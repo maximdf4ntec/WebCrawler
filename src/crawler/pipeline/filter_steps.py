@@ -71,8 +71,8 @@ class DeduplicationStep(FilterStep):
 
     name = "deduplication"
 
-    def execute(self, ctx: FilterContext) -> bool:
-        return not ctx.store.exists(ctx.url)
+    async def execute(self, ctx: FilterContext) -> bool:  # type: ignore[override]
+        return not await ctx.store.exists(ctx.url)
 
 
 # Filter step registry — order defines default pipeline execution order.
