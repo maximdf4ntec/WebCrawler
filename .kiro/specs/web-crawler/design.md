@@ -362,44 +362,72 @@ class RateLimiter:
 
 **Algorithm — Rate Limiter:**
 
+The rate limiter uses a pending-count with an `asyncio.Lock` for capacity enforcement,
+an `asyncio.Semaphore` for concurrency gating, and an `asyncio.Event` for global backoff
+pause. Each `execute()` call tracks its own consecutive-429 counter (per Requirement 6.7:
+"IF a single request receives 10 consecutive 429 responses").
+
 ```python
 class RateLimiter:
-    def __init__(self) -> None:
-        self._queue: asyncio.Queue[PendingRequest] = asyncio.Queue(maxsize=1000)
-        self._backoff_until: float = 0.0
-        self._consecutive_429_count: int = 0
+    def __init__(self, max_concurrency: int = 10) -> None:
+        self._semaphore = asyncio.Semaphore(max_concurrency)
+        self._backoff_event = asyncio.Event()
+        self._backoff_event.set()  # Not backing off initially
+        self._pending_count = 0
+        self._pending_lock = asyncio.Lock()
 
     async def execute(self, fn: Callable[[], Awaitable[T]]) -> T:
-        if self._queue.full():
-            raise QueueOverflowError("Rate limiter queue at capacity (1000)")
+        # Capacity check — reject if 1000 requests already pending
+        async with self._pending_lock:
+            if self._pending_count >= 1000:
+                raise QueueOverflowError("Rate limiter queue at capacity (1000)")
+            self._pending_count += 1
+        try:
+            return await self._execute_with_retry(fn)
+        finally:
+            async with self._pending_lock:
+                self._pending_count -= 1
 
-        await self._wait_for_backoff()
-        await self._acquire_token()
+    async def _execute_with_retry(self, fn: Callable[[], Awaitable[T]]) -> T:
+        consecutive_429_count = 0
+        while True:
+            await self._backoff_event.wait()       # global pause gate
+            await self._semaphore.acquire()        # concurrency slot
+            try:
+                result = await fn()
+            except Exception:
+                self._semaphore.release()
+                raise
+            else:
+                self._semaphore.release()
 
-        result = await fn()
-        if result.status_code == 429:
-            self._consecutive_429_count += 1
-            if self._consecutive_429_count >= 10:
-                raise RateLimitExhaustedError()
-            backoff_duration = self._compute_backoff(
-                result.headers.get("retry-after")
-            )
-            self._backoff_until = time.time() + backoff_duration
-            # pause all dispatches, retry after backoff
-            return await self._retry_after_backoff(fn)
-        else:
-            self._consecutive_429_count = 0
+            if result.status_code == 429:
+                consecutive_429_count += 1
+                if consecutive_429_count >= 10:
+                    raise RateLimitExhaustedError()
+                backoff_duration = self._compute_backoff(
+                    result.headers.get("retry-after"), consecutive_429_count
+                )
+                await self._apply_backoff(backoff_duration)
+                continue
             return result
 
-    def _compute_backoff(self, retry_after: Optional[str]) -> float:
+    def _compute_backoff(self, retry_after: Optional[str], consecutive_count: int) -> float:
         if retry_after is not None:
             value = float(retry_after)
-            if 1 <= value <= 300:
-                return value
             if value > 300:
                 return 300.0
+            if value >= 1:
+                return value
         # No header: exponential backoff
-        return min(1.0 * 2 ** (self._consecutive_429_count - 1), 60.0)
+        return min(1.0 * 2 ** (consecutive_count - 1), 60.0)
+
+    async def _apply_backoff(self, duration: float) -> None:
+        self._backoff_event.clear()
+        try:
+            await asyncio.sleep(duration)
+        finally:
+            self._backoff_event.set()
 ```
 
 ### 6. URL Normalizer

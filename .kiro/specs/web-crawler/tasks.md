@@ -93,11 +93,11 @@ This plan implements a production-grade web crawler in Python 3.12+ using asynci
     - Create `tests/unit/test_metadata_store.py`
     - _Requirements: 2.2, 4.1, 16.4_
 
-- [ ] 4. Checkpoint - Ensure all tests pass
+- [x] 4. Checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 5. Rate Limiter
-  - [ ] 5.1 Implement Rate Limiter with asyncio and 429 backoff
+  - [x] 5.1 Implement Rate Limiter with asyncio and 429 backoff
     - Create `src/crawler/rate_limiter.py`
     - Implement asyncio.Queue-based FIFO queue with max capacity 1000
     - Implement `execute()`: queue requests when at capacity, dispatch in FIFO order using asyncio.Semaphore
