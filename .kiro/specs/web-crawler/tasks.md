@@ -54,8 +54,8 @@ This plan implements a production-grade web crawler in Python 3.12+ using asynci
     - Create `tests/properties/test_url_filter_props.py`
     - **Validates: Requirements 7.1, 7.2, 7.3, 7.4**
 
-- [-] 3. Metadata Store (SQLite)
-  - [-] 3.1 Implement Metadata Store initialization and schema
+- [ ] 3. Metadata Store (SQLite)
+  - [x] 3.1 Implement Metadata Store initialization and schema
     - Create `src/crawler/metadata_store.py`
     - Implement `init()`: create tables (`crawl_config`, `url_records`, `html_metadata`, `image_metadata`, `video_metadata`, `pdf_metadata`) with indexes
     - Configure SQLite pragmas: WAL mode, busy_timeout=5000, synchronous=NORMAL, foreign_keys=ON
