@@ -1525,3 +1525,40 @@ The following performance metrics are identified as valuable for production moni
 - Per-URL timing could be stored in an optional `url_timings` table for post-crawl analysis.
 - Progress logs should be extended to include `urls_per_second` and `bytes_per_second` once implemented.
 - Consider a lightweight in-process metrics registry (counter/gauge/histogram pattern) to avoid coupling metric collection to specific components.
+
+---
+
+## Future: Streaming Response Bodies (Not Implemented)
+
+Currently, the entire HTTP response body is loaded into memory as a single `bytes` object before any processing occurs. This is visible throughout the pipeline:
+
+- `FetchResponse.body: Optional[bytes]` holds the full payload in memory.
+- `HttpFetcher` uses `resp.content` (eager read) rather than `resp.aiter_bytes()` (streaming).
+- `Worker._handle_200()` hashes and size-checks the complete body before dispatching to processors.
+- Content processors (HTML, Image, PDF, Video) all receive and operate on the full `bytes` buffer.
+
+For a typical website crawl with bounded `max_content_size` (default 50 MB) and moderate concurrency, this is acceptable. However, under high concurrency with large assets, peak memory usage scales as `max_concurrency × max_content_size` (e.g., 5 workers × 50 MB = 250 MB worst case).
+
+### Proposed Streaming Architecture
+
+| Concern | Current | Streaming (Future) |
+|---------|---------|-------------------|
+| Fetch | `resp.content` (eager) | `resp.aiter_bytes(chunk_size)` (lazy) |
+| Size enforcement | Post-download length check | Incremental byte counter; abort on threshold |
+| Hashing | `hashlib.sha256(body)` | Incremental `hash.update(chunk)` during stream |
+| File persistence | Write full buffer after processing | Stream chunks directly to disk via `aiofiles` |
+| Content processing | Processor receives full `bytes` | Processor receives file path or async iterator |
+
+### Key Design Decisions (Future)
+
+- **Chunk size**: 64 KB default (balances syscall overhead vs. memory footprint).
+- **Processor interface change**: `BaseProcessor.process()` would accept a file path (already persisted) instead of raw bytes, enabling arbitrarily large files without memory pressure.
+- **Two-pass processing for HTML**: Stream to disk first, then parse from file — avoids holding both raw bytes and parsed DOM simultaneously.
+- **Backward compatibility**: The `FetchResponse` model would retain a `body` field for small responses (< 1 MB), switching to a `body_path: Path` field for streamed content, so existing processors work without modification for typical HTML pages.
+
+### When This Becomes Necessary
+
+- Crawling sites with many large media assets (video, high-res images) at high concurrency.
+- Raising `max_content_size` above 100 MB.
+- Running on memory-constrained environments (containers with tight limits).
+- Supporting download-resume for interrupted large transfers.
