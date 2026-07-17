@@ -146,14 +146,20 @@ class Worker:
             response, lease, self.metadata_store
         )
 
+        # If content_dispatcher returned None, the content type is unsupported
+        if result is None:
+            content_type = response.headers.get("content-type", "")
+            return self._terminal_failed(
+                lease, f"unsupported content type: {content_type}"
+            )
+
         # Enqueue discovered URLs
-        if result and result.discovered_urls:
+        if result.discovered_urls:
             await self._enqueue_discovered_urls(result.discovered_urls, lease.depth + 1)
 
         # Mark completed in metadata store
         content_type = response.headers.get("content-type")
         etag = response.headers.get("etag")
-        metadata = result.metadata if result else None
 
         await self.metadata_store.mark_completed(
             lease.normalized_url,
@@ -161,7 +167,7 @@ class Worker:
             content_hash,
             content_type,
             etag,
-            metadata,
+            result.metadata,
         )
 
         return WorkerResult(
@@ -169,8 +175,8 @@ class Worker:
             status="completed",
             content_hash=content_hash,
             content_type=content_type,
-            metadata=metadata,
-            discovered_urls=result.discovered_urls if result else [],
+            metadata=result.metadata,
+            discovered_urls=result.discovered_urls,
         )
 
     # ------------------------------------------------------------------

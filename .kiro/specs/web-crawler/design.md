@@ -1326,6 +1326,16 @@ The Rate_Limiter applies backoff globally — a single 429 response pauses all w
 
 With `max_concurrency` workers each holding up to `max_content_size` bytes in memory simultaneously, peak memory usage can reach `max_concurrency × max_content_size` (default: 5 × 50MB = 250MB). The design does not enforce a process-wide memory ceiling. For production use with higher concurrency or larger content limits, streaming downloads to disk before processing would be needed.
 
+### robots.txt Compliance (Future)
+
+The crawler does not currently fetch or respect `robots.txt` directives. For production use against live websites, a `RobotsChecker` component should be added to the URL Filter pipeline that:
+1. Fetches and caches `/robots.txt` for each target domain (with a configurable TTL).
+2. Parses `Disallow` / `Allow` directives for the crawler's User-Agent.
+3. Rejects URLs that match disallowed paths before they enter the frontier.
+4. Respects `Crawl-delay` directives by feeding them into the Rate Limiter.
+
+This would be implemented as a new `FilterStep` (e.g., `RobotsCheckStep`) in the URL Filter pipeline, keeping the existing architecture intact. Not needed for the mock API environment but essential before crawling third-party sites.
+
 ---
 
 ## Testing Strategy
@@ -1430,3 +1440,88 @@ class TestURLNormalizerProperties:
 - **SQLite**: Real database in `:memory:` mode for unit tests; file-based for integration tests
 - **Filesystem**: Real filesystem in `tmp_path` fixtures (cleaned up by pytest)
 - **Time**: Mocked via `freezegun` or `time_machine` for backoff and lease expiration tests
+
+---
+
+## Future: Performance Metrics and Instrumentation (Not Implemented)
+
+The following performance metrics are identified as valuable for production monitoring, capacity planning, and bottleneck diagnosis. They are **not currently implemented** and are documented here as a roadmap for future instrumentation work.
+
+### Per-URL Fetch Metrics
+
+| Metric | Description | Granularity |
+|--------|-------------|-------------|
+| `fetch_latency_ms` | Wall-clock time from HTTP request to response received | Per URL |
+| `processing_time_ms` | Time spent in content processor (parsing, extraction) | Per URL |
+| `queue_wait_time_ms` | Time a URL spends in `Pending` state before being leased | Per URL |
+| `rate_limiter_wait_ms` | Time a request spends waiting for a rate limiter slot | Per request |
+| `total_url_time_ms` | End-to-end time from lease acquisition to completion | Per URL |
+
+### Aggregate Throughput Metrics
+
+| Metric | Description | Reporting |
+|--------|-------------|-----------|
+| `urls_per_second` | Completed URLs per second (rolling window) | Periodic (progress log) |
+| `bytes_per_second` | Total bytes downloaded per second | Periodic |
+| `avg_fetch_latency_ms` | Mean fetch latency across all completed URLs | Periodic + final |
+| `p50_fetch_latency_ms` | Median fetch latency | Final summary |
+| `p95_fetch_latency_ms` | 95th percentile fetch latency | Final summary |
+| `p99_fetch_latency_ms` | 99th percentile fetch latency | Final summary |
+
+### Worker Utilization Metrics
+
+| Metric | Description |
+|--------|-------------|
+| `worker_utilization_pct` | Percentage of time workers are actively processing vs. idle |
+| `worker_busy_count` | Number of workers currently processing (sampled periodically) |
+| `worker_idle_count` | Number of idle worker slots |
+| `avg_concurrent_workers` | Average number of active workers over the crawl lifetime |
+
+### Rate Limiter Metrics
+
+| Metric | Description |
+|--------|-------------|
+| `total_backoff_time_ms` | Cumulative time spent in 429 backoff |
+| `backoff_count` | Number of times global backoff was triggered |
+| `queue_depth_avg` | Average number of requests waiting in rate limiter queue |
+| `queue_depth_max` | Peak rate limiter queue depth |
+
+### Error Distribution Counters
+
+| Metric | Description |
+|--------|-------------|
+| `http_200_count` | Successful fetches |
+| `http_301_count` | Redirect (moved permanently) |
+| `http_302_count` | Redirect (found) |
+| `http_403_count` | Forbidden responses |
+| `http_404_count` | Not found responses |
+| `http_429_count` | Rate limited responses |
+| `http_500_count` | Server error responses |
+| `other_status_count` | Unexpected status codes |
+| `network_error_count` | Connection failures, timeouts, DNS errors |
+
+### Content Type Breakdown
+
+| Metric | Description |
+|--------|-------------|
+| `html_pages_crawled` | Total HTML pages successfully processed |
+| `images_downloaded` | Total images downloaded |
+| `videos_downloaded` | Total videos downloaded |
+| `pdfs_downloaded` | Total PDFs downloaded |
+| `unsupported_types` | URLs rejected due to unsupported content type |
+
+### Storage Metrics
+
+| Metric | Description |
+|--------|-------------|
+| `total_bytes_downloaded` | Cumulative bytes received from Fetch API |
+| `total_bytes_stored` | Cumulative bytes persisted to Page Store (after dedup) |
+| `dedup_savings_bytes` | Bytes saved by content-addressed deduplication |
+| `db_size_bytes` | Current SQLite database file size |
+
+### Implementation Notes (Future)
+
+- Metrics should be collected in-memory during the crawl and flushed to a `crawl_metrics` table in SQLite at crawl completion.
+- Per-URL timing could be stored in an optional `url_timings` table for post-crawl analysis.
+- Progress logs should be extended to include `urls_per_second` and `bytes_per_second` once implemented.
+- Consider a lightweight in-process metrics registry (counter/gauge/histogram pattern) to avoid coupling metric collection to specific components.

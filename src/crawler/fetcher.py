@@ -96,6 +96,15 @@ class MockApiFetcher(Fetcher):
                 headers=data.get("headers", {}),
                 body=body,
             )
+        except httpx.TimeoutException as e:
+            raise TimeoutError(f"Timeout reaching mock API for {url}: {e}") from e
+        except httpx.ConnectError as e:
+            raise ConnectionError(
+                f"Connection to mock API failed for {url}: {e}"
+            ) from e
+        except httpx.HTTPError as e:
+            # Other httpx transport errors (pool timeouts, protocol errors, etc.)
+            raise TransientError(f"Transport error from mock API for {url}: {e}") from e
         except (ValueError, KeyError) as e:
             # ValueError: JSON decode failure; KeyError: missing required fields.
             # Per Requirement 5.9, treat as transient error for retry.
