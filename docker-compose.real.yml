@@ -1,0 +1,10 @@
+services:
+  crawler-real:
+    build: .
+    volumes:
+      # Separate data/output dirs from the mock-mode compose file —
+      # guarantees this is a genuinely fresh crawl (empty DB, not a resume)
+      - ./data-real:/app/data
+      - ./output-real:/app/output
+      - ./config.yaml:/app/config.yaml:ro
+    command: ["crawl", "--config", "/app/config.yaml", "--db", "/app/data/crawl.db", "--output", "/app/output", "--real"]

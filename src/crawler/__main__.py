@@ -52,6 +52,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default="output",
         help="Base output directory for crawled content (default: output)",
     )
+    crawl_parser.add_argument(
+        "--real",
+        action="store_true",
+        help="Use real HTTP requests (HttpFetcher) instead of the mock Fetch API",
+    )
 
     # --- resume subcommand ---
     resume_parser = subparsers.add_parser(
@@ -68,6 +73,11 @@ def _build_parser() -> argparse.ArgumentParser:
         type=str,
         default="output",
         help="Base output directory for crawled content (default: output)",
+    )
+    resume_parser.add_argument(
+        "--real",
+        action="store_true",
+        help="Use real HTTP requests (HttpFetcher) instead of the mock Fetch API",
     )
 
     return parser
@@ -86,7 +96,9 @@ def _print_result(result: CrawlResult) -> None:
 
 async def _run_crawl(args: argparse.Namespace) -> None:
     """Execute the crawl subcommand."""
-    crawler = Crawler(db_path=args.db, output_path=args.output)
+    crawler = Crawler(
+        db_path=args.db, output_path=args.output, use_mock_api=not args.real
+    )
     config_path = Path(args.config)
 
     if not config_path.exists():
@@ -98,7 +110,9 @@ async def _run_crawl(args: argparse.Namespace) -> None:
 
 async def _run_resume(args: argparse.Namespace) -> None:
     """Execute the resume subcommand."""
-    crawler = Crawler(db_path=args.db, output_path=args.output)
+    crawler = Crawler(
+        db_path=args.db, output_path=args.output, use_mock_api=not args.real
+    )
     result = await crawler.resume(db_path=args.db)
     _print_result(result)
 

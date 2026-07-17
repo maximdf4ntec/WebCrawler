@@ -1,0 +1,11 @@
+services:
+  crawler:
+    build: .
+    volumes:
+      # SQLite DB (frontier + metadata) — survives restarts for resume
+      - ./data:/app/data
+      # Downloaded content: html/, images/, videos/, pdfs/
+      - ./output:/app/output
+      # Your crawl config — edit config.yaml and re-run
+      - ./config.yaml:/app/config.yaml:ro
+    command: ["crawl", "--config", "/app/config.yaml", "--db", "/app/data/crawl.db", "--output", "/app/output"]

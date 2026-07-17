@@ -1,0 +1,13 @@
+seed_url: "https://example.com"
+
+max_depth: 5
+max_concurrency: 5
+max_retries: 3
+max_content_size: 52428800   # 50 MB
+max_redirects: 5
+batch_size: 50
+lease_timeout_ms: 60000
+progress_interval_ms: 10000
+
+include_patterns: []
+exclude_patterns: []
