@@ -1,8 +1,0 @@
-pyproject.toml
-src/crawler/__init__.py
-src/crawler/url_normalizer.py
-src/web_crawler.egg-info/PKG-INFO
-src/web_crawler.egg-info/SOURCES.txt
-src/web_crawler.egg-info/dependency_links.txt
-src/web_crawler.egg-info/requires.txt
-src/web_crawler.egg-info/top_level.txt
