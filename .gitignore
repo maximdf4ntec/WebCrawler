@@ -1,1 +1,7 @@
 *.egg-info/
+# Ignore Python bytecode
+*.pyc
+*.pyo
+*.pyd
+# Ignore the cache directory
+__pycache__/
