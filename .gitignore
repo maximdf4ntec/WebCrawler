@@ -5,3 +5,7 @@
 *.pyd
 # Ignore the cache directory
 __pycache__/
+crawl.db
+crawl.db-shm
+crawl.db-wal
+*.coverage
